@@ -4,6 +4,9 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+bytemuck = "1.24.0"
+nalgebra = {version = "0.34.1", features = ["bytemuck"]}
+nalgebra-glm = {version =  "0.20.0", features = ["convert-bytemuck"]}
 pollster = "0.4.0"
 wgpu = "27.0.1"
 winit = {version = "0.30.12", features = ["rwh_06"]}

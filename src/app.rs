@@ -7,7 +7,11 @@ use wgpu::{
     SurfaceConfiguration, TextureFormat, wgt::DeviceDescriptor,
 };
 use winit::{
-    application::ApplicationHandler, dpi::PhysicalSize, event::WindowEvent, window::Window,
+    application::ApplicationHandler,
+    dpi::PhysicalSize,
+    event::{KeyEvent, WindowEvent},
+    keyboard::{KeyCode, PhysicalKey},
+    window::Window,
 };
 
 use crate::render_context::RenderContext;
@@ -29,7 +33,6 @@ impl App {
         }
     }
 
-    // TODO: fix this shit
     fn resize(&mut self, new_size: PhysicalSize<u32>) {
         let (_, surface, adapter, device, _) = self
             .wgpu_structures
@@ -70,6 +73,16 @@ impl ApplicationHandler for App {
                     .expect("Failed to create window!"),
             );
 
+            window.set_cursor_visible(false);
+            if let Err(_e) = window.set_cursor_grab(winit::window::CursorGrabMode::Confined)
+                && let Err(err) = window.set_cursor_grab(winit::window::CursorGrabMode::Locked)
+            {
+                eprintln!(
+                    "Warning: Could not grab cursor (Confined or Locked): {}",
+                    err
+                );
+            }
+
             self.window = Some(window.clone());
 
             let instance = Instance::new(&InstanceDescriptor {
@@ -97,7 +110,12 @@ impl ApplicationHandler for App {
                         features_wgpu: FeaturesWGPU::empty(),
                         features_webgpu: FeaturesWebGPU::empty(),
                     },
-                    required_limits: Limits::downlevel_defaults(),
+                    required_limits: Limits::defaults().using_resolution(Limits {
+                        max_texture_dimension_1d: 8192,
+                        max_texture_dimension_2d: 8192,
+                        max_texture_dimension_3d: 2048,
+                        ..Default::default()
+                    }),
                     experimental_features: ExperimentalFeatures::disabled(),
                     memory_hints: wgpu::MemoryHints::Performance,
                     trace: wgpu::Trace::Off,
@@ -107,15 +125,30 @@ impl ApplicationHandler for App {
 
             self.wgpu_structures = Some((instance, surface, adapter, device.clone(), queue));
             self.render_context = Some(RenderContext::new(device));
+
+            self.render_context.as_mut().unwrap().on_resume();
         }
 
         self.resize(self.window.as_ref().unwrap().inner_size());
     }
 
+    fn device_event(
+        &mut self,
+        _: &winit::event_loop::ActiveEventLoop,
+        _: winit::event::DeviceId,
+        event: winit::event::DeviceEvent,
+    ) {
+        if let winit::event::DeviceEvent::MouseMotion { delta: (dx, dy) } = event
+            && let Some(render_context) = self.render_context.as_mut()
+        {
+            render_context.on_mouse_motion(dx, dy);
+        }
+    }
+
     fn window_event(
         &mut self,
         event_loop: &winit::event_loop::ActiveEventLoop,
-        window_id: winit::window::WindowId,
+        _: winit::window::WindowId,
         event: winit::event::WindowEvent,
     ) {
         match event {
@@ -134,10 +167,30 @@ impl ApplicationHandler for App {
                 self.render_context.as_mut().unwrap().resize(new_size);
                 self.window.as_ref().unwrap().request_redraw();
             }
+
+            WindowEvent::KeyboardInput {
+                event:
+                    KeyEvent {
+                        physical_key: PhysicalKey::Code(key_code),
+                        state,
+                        ..
+                    },
+                ..
+            } => {
+                if key_code == KeyCode::Escape && state.is_pressed() {
+                    event_loop.exit();
+                } else if let Some(render_context) = self.render_context.as_mut() {
+                    render_context.on_key_event(key_code, state);
+                }
+            }
             WindowEvent::RedrawRequested => {
+                let render_context: &mut RenderContext = self.render_context.as_mut().unwrap();
+
+                render_context.update();
+
                 let window = self.window.as_ref().unwrap();
                 let (_instance, surface, _adapter, device, queue) =
-                    self.wgpu_structures.as_ref().unwrap();
+                    self.wgpu_structures.as_mut().unwrap();
 
                 let surface_texture = match surface.get_current_texture() {
                     Ok(t) => t,
@@ -161,10 +214,7 @@ impl ApplicationHandler for App {
                         label: Some("Command Encoder"),
                     });
 
-                self.render_context
-                    .as_mut()
-                    .unwrap()
-                    .render_frame(&mut command_encoder, &surface_view);
+                render_context.render_frame(&mut command_encoder, &surface_view, queue);
 
                 queue.submit([command_encoder.finish()]);
 
@@ -173,7 +223,7 @@ impl ApplicationHandler for App {
                 window.request_redraw();
             }
             _ => {
-                println!("{event_loop:?} {window_id:?} {event:?}")
+                // println!("{event_loop:?} {window_id:?} {event:?}")
             }
         }
     }

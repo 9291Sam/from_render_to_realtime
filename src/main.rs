@@ -1,4 +1,5 @@
 mod app;
+mod camera;
 mod render_context;
 
 use winit::event_loop::EventLoop;
