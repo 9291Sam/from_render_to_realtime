@@ -2,39 +2,51 @@ use std::sync::Arc;
 
 use pollster::FutureExt;
 use wgpu::{
-    Adapter, Backends, Color, CommandEncoderDescriptor, Device, ExperimentalFeatures, FeaturesWGPU,
-    FeaturesWebGPU, Instance, InstanceDescriptor, Limits, Operations, Queue,
-    RenderPassColorAttachment, RenderPassDescriptor, RequestAdapterOptions, Surface,
-    SurfaceConfiguration, wgt::DeviceDescriptor,
+    Adapter, Backends, CommandEncoderDescriptor, Device, ExperimentalFeatures, FeaturesWGPU,
+    FeaturesWebGPU, Instance, InstanceDescriptor, Limits, Queue, RequestAdapterOptions, Surface,
+    SurfaceConfiguration, TextureFormat, wgt::DeviceDescriptor,
 };
 use winit::{
     application::ApplicationHandler, dpi::PhysicalSize, event::WindowEvent, window::Window,
 };
 
+use crate::render_context::RenderContext;
+
 pub struct App {
     window: Option<Arc<Window>>,
     wgpu_structures: Option<(Instance, Surface<'static>, Adapter, Device, Queue)>,
+    render_context: Option<RenderContext>,
 }
 
 impl App {
+    pub const SURFACE_TEXTURE_FORMAT: TextureFormat = TextureFormat::Bgra8UnormSrgb;
+
     pub fn new() -> App {
         App {
             window: None,
             wgpu_structures: None,
+            render_context: None,
         }
     }
 
+    // TODO: fix this shit
     fn resize(&mut self, new_size: PhysicalSize<u32>) {
-        if new_size.height > 0 && new_size.width > 0 {
-            let (_, surface, adapter, device, _) = self
-                .wgpu_structures
-                .as_ref()
-                .expect("BUG: tried to call resize w/o wgpu initialization");
+        let (_, surface, adapter, device, _) = self
+            .wgpu_structures
+            .as_ref()
+            .expect("BUG: tried to call resize w/o wgpu initialization");
 
-            let surface_capabilities = surface.get_capabilities(adapter);
+        let surface_capabilities = surface.get_capabilities(adapter);
+        assert!(
+            surface_capabilities
+                .formats
+                .contains(&Self::SURFACE_TEXTURE_FORMAT)
+        );
+
+        if new_size.height > 0 && new_size.width > 0 {
             let config = SurfaceConfiguration {
                 usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-                format: surface_capabilities.formats[0],
+                format: Self::SURFACE_TEXTURE_FORMAT,
                 width: new_size.width,
                 height: new_size.height,
                 present_mode: wgpu::PresentMode::Fifo,
@@ -93,7 +105,8 @@ impl ApplicationHandler for App {
                 .block_on()
                 .expect("Failed to create WGPU Device & Queue");
 
-            self.wgpu_structures = Some((instance, surface, adapter, device, queue))
+            self.wgpu_structures = Some((instance, surface, adapter, device.clone(), queue));
+            self.render_context = Some(RenderContext::new(device));
         }
 
         self.resize(self.window.as_ref().unwrap().inner_size());
@@ -112,10 +125,13 @@ impl ApplicationHandler for App {
             }
             WindowEvent::Resized(new_size) => {
                 self.resize(new_size);
+                self.render_context.as_mut().unwrap().resize(new_size);
                 self.window.as_ref().unwrap().request_redraw();
             }
             WindowEvent::ScaleFactorChanged { .. } => {
-                self.resize(self.window.as_ref().unwrap().inner_size());
+                let new_size = self.window.as_ref().unwrap().inner_size();
+                self.resize(new_size);
+                self.render_context.as_mut().unwrap().resize(new_size);
                 self.window.as_ref().unwrap().request_redraw();
             }
             WindowEvent::RedrawRequested => {
@@ -145,28 +161,10 @@ impl ApplicationHandler for App {
                         label: Some("Command Encoder"),
                     });
 
-                {
-                    let _render_pass = command_encoder.begin_render_pass(&RenderPassDescriptor {
-                        label: Some("Render Pass"),
-                        color_attachments: &[Some(RenderPassColorAttachment {
-                            view: &surface_view,
-                            depth_slice: None,
-                            resolve_target: None,
-                            ops: Operations {
-                                load: wgpu::LoadOp::Clear(Color {
-                                    r: 0.5,
-                                    g: 0.6,
-                                    b: 0.7,
-                                    a: 1.0,
-                                }),
-                                store: wgpu::StoreOp::Store,
-                            },
-                        })],
-                        depth_stencil_attachment: None,
-                        timestamp_writes: None,
-                        occlusion_query_set: None,
-                    });
-                }
+                self.render_context
+                    .as_mut()
+                    .unwrap()
+                    .render_frame(&mut command_encoder, &surface_view);
 
                 queue.submit([command_encoder.finish()]);
 
