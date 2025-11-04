@@ -1,6 +1,7 @@
 mod app;
 mod camera;
 mod render_context;
+mod triangle;
 
 use winit::event_loop::EventLoop;
 

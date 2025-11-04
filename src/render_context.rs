@@ -18,96 +18,43 @@ use winit::{dpi::PhysicalSize, event::ElementState, keyboard::KeyCode};
 use crate::{
     app::App,
     camera::{Camera, Transform},
+    triangle::Triangle,
 };
 
 pub struct RenderContext {
     _device: Device,
-    triangle_pipeline: RenderPipeline,
-    uniform_buffer: Buffer,
-    bind_group: BindGroup,
 
     camera: Camera,
     input_state: InputState,
     last_frame_time: Option<Instant>,
+
+    triangle: Triangle,
+    triangle2: Triangle,
 }
 
 impl RenderContext {
     pub fn new(device: Device) -> RenderContext {
-        let triangle_shaders = include_wgsl!("triangle.wgsl");
-        let triangle_shader_module = device.create_shader_module(triangle_shaders);
-
-        let uniform_buffer = device.create_buffer(&BufferDescriptor {
-            label: Some("Camera Uniform Buffer"),
-            size: size_of::<Mat4>() as u64,
-            usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-
-        let bind_group_layout = device.create_bind_group_layout(&BindGroupLayoutDescriptor {
-            label: Some("Bind Group Layout"),
-            entries: &[BindGroupLayoutEntry {
-                binding: 0,
-                visibility: ShaderStages::all(),
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Uniform,
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
-                },
-                count: None,
-            }],
-        });
-
-        let pipeline_layout = device.create_pipeline_layout(&PipelineLayoutDescriptor {
-            label: Some("Pipeline Layout"),
-            bind_group_layouts: &[&bind_group_layout],
-            push_constant_ranges: &[],
-        });
-
-        let bind_group = device.create_bind_group(&BindGroupDescriptor {
-            label: Some("Bind Group"),
-            layout: &bind_group_layout,
-            entries: &[BindGroupEntry {
-                binding: 0,
-                resource: wgpu::BindingResource::Buffer(BufferBinding {
-                    buffer: &uniform_buffer,
-                    offset: 0,
-                    size: None,
-                }),
-            }],
-        });
-
         RenderContext {
             _device: device.clone(),
-            triangle_pipeline: device.create_render_pipeline(&RenderPipelineDescriptor {
-                label: Some("Simple Triangle Pipeline"),
-                layout: Some(&pipeline_layout),
-                vertex: VertexState {
-                    module: &triangle_shader_module,
-                    entry_point: Some("vs_main"),
-                    compilation_options: PipelineCompilationOptions::default(),
-                    buffers: &[],
-                },
-                primitive: PrimitiveState::default(),
-                depth_stencil: None,
-                multisample: MultisampleState::default(),
-                fragment: Some(FragmentState {
-                    module: &triangle_shader_module,
-                    entry_point: Some("fs_main"),
-                    compilation_options: PipelineCompilationOptions::default(),
-                    targets: &[Some(ColorTargetState {
-                        format: App::SURFACE_TEXTURE_FORMAT,
-                        blend: None,
-                        write_mask: ColorWrites::all(),
-                    })],
-                }),
-                multiview: None,
-                cache: None,
-            }),
+
             camera: Camera::new_zeroed(),
             input_state: InputState::default(),
             last_frame_time: None,
-            uniform_buffer,
-            bind_group,
+            triangle: Triangle::new(
+                device.clone(),
+                Transform {
+                    translation: Vec3::new(3.0, -1.3, 2.1),
+                    ..Default::default()
+                },
+            ),
+
+            triangle2: Triangle::new(
+                device,
+                Transform {
+                    translation: Vec3::new(3.0, 1.3, 2.1),
+                    ..Default::default()
+                },
+            ),
         }
     }
 
@@ -213,21 +160,11 @@ impl RenderContext {
             occlusion_query_set: None,
         });
 
-        let surface_extent = surface_view.texture().size();
+        self.triangle
+            .draw(&self.camera, surface_view, queue, &mut render_pass);
 
-        queue.write_buffer(
-            &self.uniform_buffer,
-            0,
-            bytes_of(&self.camera.get_perspective(
-                Vec2::new(surface_extent.width as f32, surface_extent.height as f32),
-                70.0 * PI / 180.0,
-                &Transform::new(),
-            )),
-        );
-
-        render_pass.set_pipeline(&self.triangle_pipeline);
-        render_pass.set_bind_group(0, &self.bind_group, &[]);
-        render_pass.draw(0..3, 0..1);
+        self.triangle2
+            .draw(&self.camera, surface_view, queue, &mut render_pass);
     }
 }
 
