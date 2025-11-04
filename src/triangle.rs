@@ -1,7 +1,7 @@
 use std::f32::consts::PI;
 
 use bytemuck::bytes_of;
-use nalgebra_glm::{Mat4, Vec2, Vec3};
+use nalgebra_glm::{Mat4, Vec2};
 
 use wgpu::{
     BindGroup, BindGroupDescriptor, BindGroupEntry, BindGroupLayoutDescriptor,
