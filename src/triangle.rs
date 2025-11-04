@@ -5,10 +5,11 @@ use nalgebra_glm::{Mat4, Vec2};
 
 use wgpu::{
     BindGroup, BindGroupDescriptor, BindGroupEntry, BindGroupLayoutDescriptor,
-    BindGroupLayoutEntry, Buffer, BufferBinding, BufferUsages, ColorTargetState, ColorWrites,
-    Device, FragmentState, MultisampleState, PipelineCompilationOptions, PipelineLayoutDescriptor,
-    PrimitiveState, Queue, RenderPass, RenderPipeline, RenderPipelineDescriptor, ShaderStages,
-    TextureView, VertexState, include_wgsl, wgt::BufferDescriptor,
+    BindGroupLayoutEntry, BindingType, Buffer, BufferBinding, BufferBindingType, BufferUsages,
+    ColorTargetState, ColorWrites, Device, FragmentState, MultisampleState,
+    PipelineCompilationOptions, PipelineLayoutDescriptor, PrimitiveState, Queue, RenderPass,
+    RenderPipeline, RenderPipelineDescriptor, ShaderStages, TextureView, VertexState, include_wgsl,
+    wgt::BufferDescriptor,
 };
 
 use crate::{
@@ -29,7 +30,7 @@ impl Triangle {
         let triangle_shader_module = device.create_shader_module(triangle_shaders);
 
         let uniform_buffer = device.create_buffer(&BufferDescriptor {
-            label: Some("Camera Uniform Buffer"),
+            label: Some("Triangle Camera Uniform Buffer"),
             size: size_of::<Mat4>() as u64,
             usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
             mapped_at_creation: false,
@@ -40,8 +41,8 @@ impl Triangle {
             entries: &[BindGroupLayoutEntry {
                 binding: 0,
                 visibility: ShaderStages::all(),
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Uniform,
+                ty: BindingType::Buffer {
+                    ty: BufferBindingType::Uniform,
                     has_dynamic_offset: false,
                     min_binding_size: None,
                 },

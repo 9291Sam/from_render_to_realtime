@@ -1,5 +1,7 @@
 use std::{
     f32::consts::PI,
+    fs::File,
+    io::BufReader,
     time::{Duration, Instant},
 };
 
@@ -8,16 +10,17 @@ use nalgebra_glm::{Mat4, Vec2, Vec3};
 use wgpu::{
     BindGroup, BindGroupDescriptor, BindGroupEntry, BindGroupLayoutDescriptor,
     BindGroupLayoutEntry, Buffer, BufferBinding, BufferUsages, Color, ColorTargetState,
-    ColorWrites, CommandEncoder, Device, FragmentState, MultisampleState, Operations,
+    ColorWrites, CommandEncoder, Device, FragmentState, LoadOp, MultisampleState, Operations,
     PipelineCompilationOptions, PipelineLayoutDescriptor, PrimitiveState, Queue,
     RenderPassColorAttachment, RenderPassDescriptor, RenderPipeline, RenderPipelineDescriptor,
-    ShaderStages, TextureView, VertexState, include_wgsl, wgt::BufferDescriptor,
+    ShaderStages, StoreOp, TextureView, VertexState, include_wgsl, wgt::BufferDescriptor,
 };
 use winit::{dpi::PhysicalSize, event::ElementState, keyboard::KeyCode};
 
 use crate::{
     app::App,
     camera::{Camera, Transform},
+    mesh_drawer::MeshDrawer,
     triangle::Triangle,
 };
 
@@ -30,6 +33,7 @@ pub struct RenderContext {
 
     triangle: Triangle,
     triangle2: Triangle,
+    mesh: MeshDrawer,
 }
 
 impl RenderContext {
@@ -49,9 +53,17 @@ impl RenderContext {
             ),
 
             triangle2: Triangle::new(
-                device,
+                device.clone(),
                 Transform {
                     translation: Vec3::new(3.0, 1.3, 2.1),
+                    ..Default::default()
+                },
+            ),
+            mesh: MeshDrawer::new(
+                device,
+                BufReader::new(File::open("models/quad.obj").unwrap()),
+                Transform {
+                    scale: Vec3::new(2.0, -2.0, 2.0),
                     ..Default::default()
                 },
             ),
@@ -146,13 +158,13 @@ impl RenderContext {
                 depth_slice: None,
                 resolve_target: None,
                 ops: Operations {
-                    load: wgpu::LoadOp::Clear(Color {
+                    load: LoadOp::Clear(Color {
                         r: 0.5,
                         g: 0.6,
                         b: 0.7,
                         a: 1.0,
                     }),
-                    store: wgpu::StoreOp::Store,
+                    store: StoreOp::Store,
                 },
             })],
             depth_stencil_attachment: None,
@@ -164,6 +176,9 @@ impl RenderContext {
             .draw(&self.camera, surface_view, queue, &mut render_pass);
 
         self.triangle2
+            .draw(&self.camera, surface_view, queue, &mut render_pass);
+
+        self.mesh
             .draw(&self.camera, surface_view, queue, &mut render_pass);
     }
 }
