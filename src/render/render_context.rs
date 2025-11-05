@@ -203,7 +203,7 @@ impl RenderContext {
                     &global_data_bind_group_layout,
                     BufReader::new(File::open("models/quad.obj").unwrap()),
                     Transform {
-                        scale: Vec3::new(10.0, -10.0, 10.0),
+                        scale: Vec3::new(100.0, -100.0, 100.0),
                         ..Default::default()
                     },
                 ),
@@ -472,15 +472,25 @@ impl RenderContext {
             }
         }
 
-        let c = hsv_to_rgb(time_alive.rem(10.0) / 10.0, 1.0, 1.0);
+        const NUMBER_OF_POINT_LIGHTS: u32 = 64;
 
         queue.write_buffer(
             &self.point_lights,
             0,
-            cast_slice(&[PointLight {
-                position: Vec4::new(5.0 * time_alive.cos(), 2.5, 5.0 * time_alive.sin(), 0.0),
-                color_and_intensity: Vec4::new(c.x, c.y, c.z, 0.5),
-            }]),
+            cast_slice(
+                &(0..NUMBER_OF_POINT_LIGHTS)
+                    .map(|i| {
+                        let t = time_alive + (i as f32 / NUMBER_OF_POINT_LIGHTS as f32) * PI * 2.0;
+                        let c = hsv_to_rgb(i as f32 / NUMBER_OF_POINT_LIGHTS as f32, 1.0, 1.0);
+                        let r = 12.0;
+
+                        PointLight {
+                            position: Vec4::new(r * t.cos(), 5.0, r * t.sin(), 0.0),
+                            color_and_intensity: Vec4::new(c.x, c.y, c.z, 2.25),
+                        }
+                    })
+                    .collect::<Vec<_>>(),
+            ),
         );
     }
 }

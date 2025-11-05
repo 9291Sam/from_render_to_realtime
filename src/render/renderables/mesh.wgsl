@@ -27,27 +27,35 @@ fn vs_main(model: VertexInput) -> VertexOutput {
     var out: VertexOutput;
     out.clip_position = mvp_matrices[matrix_index] * vec4<f32>(model.position, 1.0);
     out.world_position = (model_matrices[matrix_index] * vec4<f32>(model.position, 1.0)).xyz;
-    out.normal = (normal_matrices[matrix_index] * vec4<f32>(model.normal, 0.0)).xyz; // TODO: normal matrix
+    out.normal = (normal_matrices[matrix_index] * vec4<f32>(model.normal, 0.0)).xyz;
     return out;
 }
 
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
-    let light = point_lights[0]; 
-   
-    let light_color = light.color_and_intensity.xyz;
-    let light_intensity = light.color_and_intensity.w;
-    let light_pos = light.position.xyz;
-    
-    let ambient_strength = 0.01;
-    let ambient_color = light_color * ambient_strength;
 
-    let normal = normalize(in.normal);
-    let light_dir = normalize(light_pos - in.world_position);
-    let diffuse_factor = max(dot(normal, light_dir), 0.0);
-    let diffuse_color = light_color * light_intensity * diffuse_factor;
-    let final_color = ambient_color + diffuse_color;
-   
+    var final_color = vec3(0.0);
+
+    for (var i = 0; i < 64; i += 1)
+    {
+        let light = point_lights[i]; 
+    
+        let light_color = light.color_and_intensity.xyz;
+        let light_intensity = light.color_and_intensity.w;
+        let light_pos = light.position.xyz;
+        let to_light_vector = light_pos - in.world_position;
+        let d = length(to_light_vector);
+        let attenuation = 1.0 / (d * d);
+        
+        let ambient_strength = 0.001;
+        let ambient_color = light_color * ambient_strength;
+
+        let normal = normalize(in.normal);
+        let light_dir = normalize(to_light_vector);
+        let diffuse_factor = max(dot(normal, light_dir), 0.0);
+        let diffuse_color = light_color * light_intensity * diffuse_factor * attenuation;
+        final_color += ambient_color + diffuse_color;
+    }
    
     return vec4<f32>(final_color, 1.0);
 }
