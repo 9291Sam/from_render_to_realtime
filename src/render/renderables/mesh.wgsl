@@ -17,6 +17,8 @@ struct PointLight {
 
 @group(0) @binding(0) var<storage, read> mvp_matrices: array<mat4x4<f32>, 1024>;
 @group(0) @binding(1) var<storage, read> model_matrices: array<mat4x4<f32>, 1024>;
+@group(0) @binding(2) var<storage, read> normal_matrices: array<mat4x4<f32>, 1024>;
+@group(0) @binding(3) var<storage, read> point_lights: array<PointLight, 64>;
 
 var<push_constant> matrix_index: u32;
 
@@ -25,13 +27,13 @@ fn vs_main(model: VertexInput) -> VertexOutput {
     var out: VertexOutput;
     out.clip_position = mvp_matrices[matrix_index] * vec4<f32>(model.position, 1.0);
     out.world_position = (model_matrices[matrix_index] * vec4<f32>(model.position, 1.0)).xyz;
-    out.normal = model.normal; // TODO: normal matrix
+    out.normal = (normal_matrices[matrix_index] * vec4<f32>(model.normal, 0.0)).xyz; // TODO: normal matrix
     return out;
 }
 
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
-    let light = PointLight(vec4<f32>(0.0, 2.5, 0.0, 0.0), vec4<f32>(0.8, 1.0, 1.0, 3.0));
+    let light = point_lights[0]; 
    
     let light_color = light.color_and_intensity.xyz;
     let light_intensity = light.color_and_intensity.w;

@@ -2,11 +2,12 @@ use std::{
     f32::consts::PI,
     fs::File,
     io::BufReader,
+    ops::Rem,
     time::{Duration, Instant},
 };
 
-use bytemuck::cast_slice;
-use nalgebra_glm::{Mat4, Vec2, Vec3};
+use bytemuck::{NoUninit, Pod, Zeroable, cast_slice};
+use nalgebra_glm::{Mat4, Vec2, Vec3, Vec4};
 use wgpu::{
     BindGroup, BindGroupDescriptor, BindGroupEntry, BindGroupLayout, BindGroupLayoutDescriptor,
     BindGroupLayoutEntry, BindingType, Buffer, BufferBinding, BufferBindingType, BufferUsages,
@@ -23,6 +24,7 @@ use crate::render::{
 };
 
 pub struct RenderContext {
+    init_time: Instant,
     device: Device,
 
     camera: Camera,
@@ -33,6 +35,8 @@ pub struct RenderContext {
 
     mvp_matrices: Buffer,
     model_matrices: Buffer,
+    normal_matrices: Buffer,
+    point_lights: Buffer,
     global_data_bind_group_layout: BindGroupLayout,
     global_data_bind_group: BindGroup,
 
@@ -45,19 +49,34 @@ pub struct RenderContext {
 impl RenderContext {
     pub const SURFACE_TEXTURE_FORMAT: TextureFormat = TextureFormat::Bgra8UnormSrgb;
     pub const SURFACE_DEPTH_FORMAT: TextureFormat = TextureFormat::Depth32Float;
-    pub const MAX_PROJECTION_MATRICES: u64 = 1024;
+    pub const MAX_MATRICES: u64 = 1024;
+    pub const MAX_POINT_LIGHTS: u64 = 64;
 
     pub fn new(device: Device) -> RenderContext {
         let mvp_matrices = device.create_buffer(&BufferDescriptor {
             label: Some("Global Projection Matrices Buffer"),
-            size: size_of::<Mat4>() as u64 * Self::MAX_PROJECTION_MATRICES,
+            size: size_of::<Mat4>() as u64 * Self::MAX_MATRICES,
             usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
 
         let model_matrices = device.create_buffer(&BufferDescriptor {
-            label: Some("Global Projection Matrices Buffer"),
-            size: size_of::<Mat4>() as u64 * Self::MAX_PROJECTION_MATRICES,
+            label: Some("Global Model Matrices Buffer"),
+            size: size_of::<Mat4>() as u64 * Self::MAX_MATRICES,
+            usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        let normal_matrices = device.create_buffer(&BufferDescriptor {
+            label: Some("Global Norma Matrices Buffer"),
+            size: size_of::<Mat4>() as u64 * Self::MAX_MATRICES,
+            usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        let point_lights = device.create_buffer(&BufferDescriptor {
+            label: Some("Global Point Lights Buffer"),
+            size: size_of::<PointLight>() as u64 * Self::MAX_POINT_LIGHTS,
             usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -78,6 +97,26 @@ impl RenderContext {
                     },
                     BindGroupLayoutEntry {
                         binding: 1,
+                        visibility: ShaderStages::all(),
+                        ty: BindingType::Buffer {
+                            ty: BufferBindingType::Storage { read_only: true },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                    BindGroupLayoutEntry {
+                        binding: 2,
+                        visibility: ShaderStages::all(),
+                        ty: BindingType::Buffer {
+                            ty: BufferBindingType::Storage { read_only: true },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                    BindGroupLayoutEntry {
+                        binding: 3,
                         visibility: ShaderStages::all(),
                         ty: BindingType::Buffer {
                             ty: BufferBindingType::Storage { read_only: true },
@@ -109,10 +148,27 @@ impl RenderContext {
                         size: None,
                     }),
                 },
+                BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::Buffer(BufferBinding {
+                        buffer: &normal_matrices,
+                        offset: 0,
+                        size: None,
+                    }),
+                },
+                BindGroupEntry {
+                    binding: 3,
+                    resource: wgpu::BindingResource::Buffer(BufferBinding {
+                        buffer: &point_lights,
+                        offset: 0,
+                        size: None,
+                    }),
+                },
             ],
         });
 
         RenderContext {
+            init_time: Instant::now(),
             device: device.clone(),
 
             camera: Camera::new(Vec3::new(-4.030, 7.04, -10.5692), 0.507993, 0.339997),
@@ -147,7 +203,7 @@ impl RenderContext {
                     &global_data_bind_group_layout,
                     BufReader::new(File::open("models/quad.obj").unwrap()),
                     Transform {
-                        scale: Vec3::new(10.0, 10.0, 10.0),
+                        scale: Vec3::new(10.0, -10.0, 10.0),
                         ..Default::default()
                     },
                 ),
@@ -175,6 +231,8 @@ impl RenderContext {
 
             mvp_matrices,
             model_matrices,
+            normal_matrices,
+            point_lights,
             global_data_bind_group_layout,
             global_data_bind_group,
         }
@@ -375,6 +433,55 @@ impl RenderContext {
                     .collect::<Vec<Mat4>>(),
             ),
         );
+
+        queue.write_buffer(
+            &self.normal_matrices,
+            0,
+            cast_slice(
+                &self
+                    .frame_data_manager
+                    .end_frame()
+                    .iter()
+                    .map(|t| t.as_normal_matrix())
+                    .collect::<Vec<Mat4>>(),
+            ),
+        );
+
+        let time_alive: f32 = self.init_time.elapsed().as_secs_f32();
+
+        fn hsv_to_rgb(h: f32, s: f32, v: f32) -> Vec3 {
+            if s == 0.0 {
+                return Vec3::new(v, v, v);
+            }
+
+            let h_norm = (h * 6.0).rem(6.0);
+            let i = h_norm.floor() as i32;
+            let f = h_norm - h_norm.floor();
+
+            let p = v * (1.0 - s);
+            let q = v * (1.0 - f * s);
+            let t = v * (1.0 - (1.0 - f) * s);
+
+            match i {
+                0 => Vec3::new(v, t, p),
+                1 => Vec3::new(q, v, p),
+                2 => Vec3::new(p, v, t),
+                3 => Vec3::new(p, q, v),
+                4 => Vec3::new(t, p, v),
+                _ => Vec3::new(v, p, q),
+            }
+        }
+
+        let c = hsv_to_rgb(time_alive.rem(10.0) / 10.0, 1.0, 1.0);
+
+        queue.write_buffer(
+            &self.point_lights,
+            0,
+            cast_slice(&[PointLight {
+                position: Vec4::new(5.0 * time_alive.cos(), 2.5, 5.0 * time_alive.sin(), 0.0),
+                color_and_intensity: Vec4::new(c.x, c.y, c.z, 0.5),
+            }]),
+        );
     }
 }
 
@@ -415,4 +522,11 @@ struct InputState {
     pub down: bool,
     pub sprint: bool,
     pub log_camera: bool,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable, Default, Debug)]
+struct PointLight {
+    position: Vec4,
+    color_and_intensity: Vec4,
 }

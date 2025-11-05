@@ -195,6 +195,17 @@ impl Transform {
         glm::scale(&glm::Mat4::identity(), &self.scale)
     }
 
+    pub fn as_normal_matrix(&self) -> glm::Mat4 {
+        let model_3x3 = glm::mat4_to_mat3(&(self.as_rotation_matrix() * self.as_scale_matrix()));
+
+        if let Some(inv_model_3x3) = model_3x3.try_inverse() {
+            let normal_mat3 = inv_model_3x3.transpose();
+            glm::mat3_to_mat4(&normal_mat3)
+        } else {
+            glm::Mat4::identity()
+        }
+    }
+
     pub fn get_forward_vector(&self) -> glm::Vec3 {
         *(UnitQuaternion::new_normalize(self.rotation).to_rotation_matrix()
             * Transform::global_forward_vector())

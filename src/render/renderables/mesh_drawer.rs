@@ -63,7 +63,7 @@ impl MeshDrawer {
                 label: Some("Pipeline Layout"),
                 bind_group_layouts: &[global_bind_group_layout],
                 push_constant_ranges: &[PushConstantRange {
-                    stages: ShaderStages::VERTEX,
+                    stages: ShaderStages::VERTEX_FRAGMENT,
                     range: 0..4,
                 }],
             })),
@@ -125,7 +125,7 @@ impl MeshDrawer {
         render_pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
 
         render_pass.set_push_constants(
-            ShaderStages::VERTEX,
+            ShaderStages::VERTEX_FRAGMENT,
             0,
             bytes_of(&frame_data_manager.append_transform(self.transform.clone())),
         );
