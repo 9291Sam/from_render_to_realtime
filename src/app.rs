@@ -3,8 +3,7 @@ use std::sync::Arc;
 use pollster::FutureExt;
 use wgpu::{
     Adapter, Backends, CommandEncoderDescriptor, Device, Instance, InstanceDescriptor, Limits,
-    Queue, RequestAdapterOptions, Surface, SurfaceConfiguration, TextureFormat,
-    wgt::DeviceDescriptor,
+    Queue, RequestAdapterOptions, Surface, SurfaceConfiguration, wgt::DeviceDescriptor,
 };
 use winit::{
     application::ApplicationHandler,
@@ -20,7 +19,7 @@ pub enum App {
     Uninitialized,
     Initialized {
         window: Arc<Window>,
-        instance: Instance,
+        _instance: Instance,
         surface: Surface<'static>,
         adapter: Adapter,
         device: Device,
@@ -30,8 +29,6 @@ pub enum App {
 }
 
 impl App {
-    pub const SURFACE_TEXTURE_FORMAT: TextureFormat = TextureFormat::Bgra8UnormSrgb;
-
     pub fn new() -> App {
         App::Uninitialized
     }
@@ -47,7 +44,7 @@ fn resize_surface(
     assert!(
         surface_capabilities
             .formats
-            .contains(&App::SURFACE_TEXTURE_FORMAT)
+            .contains(&RenderContext::SURFACE_TEXTURE_FORMAT)
     );
 
     if new_size.height > 0 && new_size.width > 0 {
@@ -55,7 +52,7 @@ fn resize_surface(
             device,
             &SurfaceConfiguration {
                 usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-                format: App::SURFACE_TEXTURE_FORMAT,
+                format: RenderContext::SURFACE_TEXTURE_FORMAT,
                 width: new_size.width,
                 height: new_size.height,
                 present_mode: wgpu::PresentMode::Fifo,
@@ -125,7 +122,7 @@ impl ApplicationHandler for App {
 
             *self = App::Initialized {
                 window,
-                instance,
+                _instance: instance,
                 surface,
                 adapter,
                 device,

@@ -6,18 +6,18 @@ use obj::Obj;
 use wgpu::{
     BindGroup, BindGroupDescriptor, BindGroupEntry, BindGroupLayoutDescriptor,
     BindGroupLayoutEntry, BindingResource, BindingType, Buffer, BufferAddress, BufferBinding,
-    BufferBindingType, BufferUsages, ColorTargetState, ColorWrites, Device, Face, FragmentState,
-    FrontFace, MultisampleState, PipelineCompilationOptions, PipelineLayoutDescriptor,
-    PrimitiveState, PrimitiveTopology, Queue, RenderPass, RenderPipeline, RenderPipelineDescriptor,
-    ShaderStages, TextureView, VertexAttribute, VertexBufferLayout, VertexFormat, VertexState,
-    VertexStepMode, include_wgsl,
+    BufferBindingType, BufferUsages, ColorTargetState, ColorWrites, DepthBiasState,
+    DepthStencilState, Device, FragmentState, FrontFace, MultisampleState,
+    PipelineCompilationOptions, PipelineLayoutDescriptor, PrimitiveState, PrimitiveTopology, Queue,
+    RenderPass, RenderPipeline, RenderPipelineDescriptor, ShaderStages, StencilState, TextureView,
+    VertexAttribute, VertexBufferLayout, VertexFormat, VertexState, VertexStepMode, include_wgsl,
     util::{BufferInitDescriptor, DeviceExt},
     wgt::BufferDescriptor,
 };
 
 use crate::{
-    app::App,
     camera::{Camera, Transform},
+    render_context::RenderContext,
 };
 
 pub struct MeshDrawer {
@@ -113,14 +113,20 @@ impl MeshDrawer {
                 cull_mode: None,
                 ..Default::default()
             },
-            depth_stencil: None,
+            depth_stencil: Some(DepthStencilState {
+                format: RenderContext::SURFACE_DEPTH_FORMAT,
+                depth_write_enabled: true,
+                depth_compare: wgpu::CompareFunction::Less,
+                stencil: StencilState::default(),
+                bias: DepthBiasState::default(),
+            }),
             multisample: MultisampleState::default(),
             fragment: Some(FragmentState {
                 module: &shader_module,
                 entry_point: Some("fs_main"),
                 compilation_options: PipelineCompilationOptions::default(),
                 targets: &[Some(ColorTargetState {
-                    format: App::SURFACE_TEXTURE_FORMAT,
+                    format: RenderContext::SURFACE_TEXTURE_FORMAT,
                     blend: None,
                     write_mask: ColorWrites::all(),
                 })],

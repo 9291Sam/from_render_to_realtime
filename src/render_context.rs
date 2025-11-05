@@ -1,35 +1,31 @@
 use std::{
-    f32::consts::PI,
     fs::File,
     io::BufReader,
     time::{Duration, Instant},
 };
 
-use bytemuck::bytes_of;
-use nalgebra_glm::{Mat4, Vec2, Vec3};
+use nalgebra_glm::Vec3;
 use wgpu::{
-    BindGroup, BindGroupDescriptor, BindGroupEntry, BindGroupLayoutDescriptor,
-    BindGroupLayoutEntry, Buffer, BufferBinding, BufferUsages, Color, ColorTargetState,
-    ColorWrites, CommandEncoder, Device, FragmentState, LoadOp, MultisampleState, Operations,
-    PipelineCompilationOptions, PipelineLayoutDescriptor, PrimitiveState, Queue,
-    RenderPassColorAttachment, RenderPassDescriptor, RenderPipeline, RenderPipelineDescriptor,
-    ShaderStages, StoreOp, TextureView, VertexState, include_wgsl, wgt::BufferDescriptor,
+    Color, CommandEncoder, Device, Extent3d, LoadOp, Operations, Queue, RenderPassColorAttachment,
+    RenderPassDepthStencilAttachment, RenderPassDescriptor, StoreOp, Texture, TextureDescriptor,
+    TextureFormat, TextureUsages, TextureView, TextureViewDescriptor,
 };
 use winit::{dpi::PhysicalSize, event::ElementState, keyboard::KeyCode};
 
 use crate::{
-    app::App,
     camera::{Camera, Transform},
     mesh_drawer::MeshDrawer,
     triangle::Triangle,
 };
 
 pub struct RenderContext {
-    _device: Device,
+    device: Device,
 
     camera: Camera,
     input_state: InputState,
     last_frame_time: Option<Instant>,
+    depth_texture: Option<Texture>,
+    depth_view: Option<TextureView>,
 
     triangle: Triangle,
     triangle2: Triangle,
@@ -37,13 +33,19 @@ pub struct RenderContext {
 }
 
 impl RenderContext {
+    pub const SURFACE_TEXTURE_FORMAT: TextureFormat = TextureFormat::Bgra8UnormSrgb;
+    pub const SURFACE_DEPTH_FORMAT: TextureFormat = TextureFormat::Depth32Float;
+
     pub fn new(device: Device) -> RenderContext {
         RenderContext {
-            _device: device.clone(),
+            device: device.clone(),
 
             camera: Camera::new_zeroed(),
             input_state: InputState::default(),
             last_frame_time: None,
+            depth_texture: None,
+            depth_view: None,
+
             triangle: Triangle::new(
                 device.clone(),
                 Transform {
@@ -96,7 +98,29 @@ impl RenderContext {
         self.camera.add_pitch((delta_y as f32) * MOUSE_SENSITIVITY);
     }
 
-    pub fn resize(&mut self, _new_size: PhysicalSize<u32>) {}
+    pub fn resize(&mut self, new_size: PhysicalSize<u32>) {
+        if new_size.width > 0 && new_size.height > 0 {
+            let depth_texture_desc = TextureDescriptor {
+                label: Some("Depth Texture"),
+                size: Extent3d {
+                    width: new_size.width,
+                    height: new_size.height,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1, // Must match pipeline
+                dimension: wgpu::TextureDimension::D2,
+                format: Self::SURFACE_DEPTH_FORMAT,
+                usage: TextureUsages::RENDER_ATTACHMENT | TextureUsages::TEXTURE_BINDING,
+                view_formats: &[],
+            };
+            let depth_texture = self.device.create_texture(&depth_texture_desc);
+            let depth_view = depth_texture.create_view(&TextureViewDescriptor::default());
+
+            self.depth_texture = Some(depth_texture);
+            self.depth_view = Some(depth_view);
+        }
+    }
 
     pub fn update(&mut self) {
         let delta_time = if let Some(last_frame_time) = self.last_frame_time {
@@ -151,6 +175,12 @@ impl RenderContext {
         surface_view: &TextureView,
         queue: &mut Queue,
     ) {
+        let depth_view = if let Some(view) = &self.depth_view {
+            view
+        } else {
+            return;
+        };
+
         let mut render_pass = command_encoder.begin_render_pass(&RenderPassDescriptor {
             label: Some("Render Pass"),
             color_attachments: &[Some(RenderPassColorAttachment {
@@ -167,7 +197,14 @@ impl RenderContext {
                     store: StoreOp::Store,
                 },
             })],
-            depth_stencil_attachment: None,
+            depth_stencil_attachment: Some(RenderPassDepthStencilAttachment {
+                view: depth_view,
+                depth_ops: Some(Operations {
+                    load: LoadOp::Clear(1.0),
+                    store: StoreOp::Store,
+                }),
+                stencil_ops: None,
+            }),
             timestamp_writes: None,
             occlusion_query_set: None,
         });

@@ -6,15 +6,15 @@ use nalgebra_glm::{Mat4, Vec2};
 use wgpu::{
     BindGroup, BindGroupDescriptor, BindGroupEntry, BindGroupLayoutDescriptor,
     BindGroupLayoutEntry, BindingType, Buffer, BufferBinding, BufferBindingType, BufferUsages,
-    ColorTargetState, ColorWrites, Device, FragmentState, MultisampleState,
-    PipelineCompilationOptions, PipelineLayoutDescriptor, PrimitiveState, Queue, RenderPass,
-    RenderPipeline, RenderPipelineDescriptor, ShaderStages, TextureView, VertexState, include_wgsl,
-    wgt::BufferDescriptor,
+    ColorTargetState, ColorWrites, DepthBiasState, DepthStencilState, Device, FragmentState,
+    MultisampleState, PipelineCompilationOptions, PipelineLayoutDescriptor, PrimitiveState, Queue,
+    RenderPass, RenderPipeline, RenderPipelineDescriptor, ShaderStages, StencilState, TextureView,
+    VertexState, include_wgsl, wgt::BufferDescriptor,
 };
 
 use crate::{
-    app::App,
     camera::{Camera, Transform},
+    render_context::RenderContext,
 };
 
 pub struct Triangle {
@@ -79,14 +79,20 @@ impl Triangle {
                 buffers: &[],
             },
             primitive: PrimitiveState::default(),
-            depth_stencil: None,
+            depth_stencil: Some(DepthStencilState {
+                format: RenderContext::SURFACE_DEPTH_FORMAT,
+                depth_write_enabled: true,
+                depth_compare: wgpu::CompareFunction::Less,
+                stencil: StencilState::default(),
+                bias: DepthBiasState::default(),
+            }),
             multisample: MultisampleState::default(),
             fragment: Some(FragmentState {
                 module: &triangle_shader_module,
                 entry_point: Some("fs_main"),
                 compilation_options: PipelineCompilationOptions::default(),
                 targets: &[Some(ColorTargetState {
-                    format: App::SURFACE_TEXTURE_FORMAT,
+                    format: RenderContext::SURFACE_TEXTURE_FORMAT,
                     blend: None,
                     write_mask: ColorWrites::all(),
                 })],
