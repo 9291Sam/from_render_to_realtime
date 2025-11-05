@@ -1,23 +1,21 @@
-use std::{f32::consts::PI, io::BufRead};
+use std::io::BufRead;
 
 use bytemuck::{Pod, Zeroable, bytes_of, cast_slice};
-use nalgebra_glm::{Mat4, Vec2, Vec3};
+use nalgebra_glm::Vec3;
 use obj::Obj;
 use wgpu::{
-    BindGroup, BindGroupDescriptor, BindGroupEntry, BindGroupLayoutDescriptor,
-    BindGroupLayoutEntry, BindingResource, BindingType, Buffer, BufferAddress, BufferBinding,
-    BufferBindingType, BufferUsages, ColorTargetState, ColorWrites, DepthBiasState,
-    DepthStencilState, Device, FragmentState, FrontFace, MultisampleState,
-    PipelineCompilationOptions, PipelineLayoutDescriptor, PrimitiveState, PrimitiveTopology, Queue,
-    RenderPass, RenderPipeline, RenderPipelineDescriptor, ShaderStages, StencilState, TextureView,
-    VertexAttribute, VertexBufferLayout, VertexFormat, VertexState, VertexStepMode, include_wgsl,
+    BindGroupLayout, Buffer, BufferAddress, BufferUsages, ColorTargetState, ColorWrites,
+    DepthBiasState, DepthStencilState, Device, FragmentState, FrontFace, MultisampleState,
+    PipelineCompilationOptions, PipelineLayoutDescriptor, PrimitiveState, PrimitiveTopology,
+    PushConstantRange, Queue, RenderPass, RenderPipeline, RenderPipelineDescriptor, ShaderStages,
+    StencilState, TextureView, VertexAttribute, VertexBufferLayout, VertexFormat, VertexState,
+    VertexStepMode, include_wgsl,
     util::{BufferInitDescriptor, DeviceExt},
-    wgt::BufferDescriptor,
 };
 
-use crate::{
-    camera::{Camera, Transform},
-    render_context::RenderContext,
+use crate::render::{
+    linear_algebra::{Camera, Transform},
+    render_context::{FrameDataManager, RenderContext},
 };
 
 pub struct MeshDrawer {
@@ -25,13 +23,16 @@ pub struct MeshDrawer {
     index_buffer: Buffer,
     number_of_indices: u32,
     pipeline: RenderPipeline,
-    uniform_buffer: Buffer,
-    bind_group: BindGroup,
     transform: Transform,
 }
 
 impl MeshDrawer {
-    pub fn new(device: Device, input: impl BufRead, transform: Transform) -> MeshDrawer {
+    pub fn new(
+        device: Device,
+        global_bind_group_layout: &BindGroupLayout,
+        input: impl BufRead,
+        transform: Transform,
+    ) -> MeshDrawer {
         let o: Obj = obj::load_obj(input).unwrap();
 
         let vertex_buffer = device.create_buffer_init(&BufferInitDescriptor {
@@ -54,52 +55,18 @@ impl MeshDrawer {
             usage: BufferUsages::INDEX,
         });
 
-        let uniform_buffer = device.create_buffer(&BufferDescriptor {
-            label: Some("Triangle Camera Uniform Buffer"),
-            size: size_of::<Mat4>() as u64,
-            usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-
-        let bind_group_layout = device.create_bind_group_layout(&BindGroupLayoutDescriptor {
-            label: Some("Bind Group Layout"),
-            entries: &[BindGroupLayoutEntry {
-                binding: 0,
-                visibility: ShaderStages::all(),
-                ty: BindingType::Buffer {
-                    ty: BufferBindingType::Uniform,
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
-                },
-                count: None,
-            }],
-        });
-
-        let pipeline_layout = device.create_pipeline_layout(&PipelineLayoutDescriptor {
-            label: Some("Pipeline Layout"),
-            bind_group_layouts: &[&bind_group_layout],
-            push_constant_ranges: &[],
-        });
-
-        let bind_group = device.create_bind_group(&BindGroupDescriptor {
-            label: Some("Bind Group"),
-            layout: &bind_group_layout,
-            entries: &[BindGroupEntry {
-                binding: 0,
-                resource: BindingResource::Buffer(BufferBinding {
-                    buffer: &uniform_buffer,
-                    offset: 0,
-                    size: None,
-                }),
-            }],
-        });
-
-        let shader = include_wgsl!("mesh.wgsl");
-        let shader_module = device.create_shader_module(shader);
+        let shader_module = device.create_shader_module(include_wgsl!("mesh.wgsl"));
 
         let pipeline = device.create_render_pipeline(&RenderPipelineDescriptor {
             label: Some("Mesh Pipeline"),
-            layout: Some(&pipeline_layout),
+            layout: Some(&device.create_pipeline_layout(&PipelineLayoutDescriptor {
+                label: Some("Pipeline Layout"),
+                bind_group_layouts: &[global_bind_group_layout],
+                push_constant_ranges: &[PushConstantRange {
+                    stages: ShaderStages::VERTEX,
+                    range: 0..4,
+                }],
+            })),
             vertex: VertexState {
                 module: &shader_module,
                 entry_point: Some("vs_main"),
@@ -140,35 +107,28 @@ impl MeshDrawer {
             index_buffer,
             number_of_indices: o.indices.len().try_into().unwrap(),
             pipeline,
-            uniform_buffer,
-            bind_group,
             transform,
         }
     }
 
     pub fn draw(
         &mut self,
-        camera: &Camera,
-        surface_view: &TextureView,
-        queue: &Queue,
+        _: &Camera,
+        frame_data_manager: &mut FrameDataManager,
+        _: &TextureView,
+        _: &Queue,
         render_pass: &mut RenderPass,
     ) {
-        let surface_extent = surface_view.texture().size();
-        queue.write_buffer(
-            &self.uniform_buffer,
-            0,
-            bytes_of(&camera.get_perspective(
-                Vec2::new(surface_extent.width as f32, surface_extent.height as f32),
-                70.0 * PI / 180.0,
-                &self.transform,
-            )),
-        );
-
         render_pass.set_pipeline(&self.pipeline);
-        render_pass.set_bind_group(0, &self.bind_group, &[]);
 
         render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
         render_pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
+
+        render_pass.set_push_constants(
+            ShaderStages::VERTEX,
+            0,
+            bytes_of(&frame_data_manager.append_transform(self.transform.clone())),
+        );
 
         render_pass.draw_indexed(0..self.number_of_indices, 0, 0..1);
     }

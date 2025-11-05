@@ -1,15 +1,14 @@
 mod app;
-mod camera;
-mod mesh_drawer;
-mod render_context;
-mod triangle;
+mod render;
 
 use winit::event_loop::EventLoop;
+
+use crate::app::App;
 
 fn main() {
     let event_loop = EventLoop::new().expect("Unable to create EventLoop!");
 
-    let mut app = app::App::new();
+    let mut app = App::new();
 
     if let Err(error) = event_loop.run_app(&mut app) {
         panic!("Event Loop Error! {}", error);

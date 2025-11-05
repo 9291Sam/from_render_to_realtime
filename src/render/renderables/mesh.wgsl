@@ -8,13 +8,15 @@ struct VertexOutput {
     @location(0) color: vec3<f32>,
 };
 
-@group(0) @binding(0)
-var<uniform> model_view_proj: mat4x4<f32>;
+
+@group(0) @binding(0) var<storage, read> projection_matrices: array<mat4x4<f32>, 1024>;
+
+var<push_constant> matrix_index: u32;
 
 @vertex
 fn vs_main(model: VertexInput) -> VertexOutput {
     var out: VertexOutput;
-    out.clip_position = model_view_proj * vec4<f32>(model.position, 1.0);
+    out.clip_position = projection_matrices[matrix_index] * vec4<f32>(model.position, 1.0);
     out.color = model.normal * 0.5 + 0.5;
     return out;
 }

@@ -5,11 +5,9 @@ struct VertexOutput {
     @location(0) color: vec4<f32>,
 }
 
-struct CameraUniform {
-    view_proj: mat4x4<f32>,
-}
+@group(0) @binding(0) var<storage, read> projection_matrices: array<mat4x4<f32>, 1024>;
 
-@group(0) @binding(0) var<uniform> camera: CameraUniform;
+var<push_constant> matrix_index: u32;
 
 @vertex
 fn vs_main(@builtin(vertex_index) in_vertex_index: u32) -> VertexOutput {
@@ -30,7 +28,7 @@ fn vs_main(@builtin(vertex_index) in_vertex_index: u32) -> VertexOutput {
 
 
     var out: VertexOutput;
-    out.clip_position = camera.view_proj * vec4<f32>(pos, 1.0);
+    out.clip_position = projection_matrices[matrix_index] * vec4<f32>(pos, 1.0);
     out.color = color;
     return out;
 }

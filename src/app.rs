@@ -2,8 +2,9 @@ use std::sync::Arc;
 
 use pollster::FutureExt;
 use wgpu::{
-    Adapter, Backends, CommandEncoderDescriptor, Device, Instance, InstanceDescriptor, Limits,
-    Queue, RequestAdapterOptions, Surface, SurfaceConfiguration, wgt::DeviceDescriptor,
+    Adapter, Backends, CommandEncoderDescriptor, Device, FeaturesWGPU, FeaturesWebGPU, Instance,
+    InstanceDescriptor, Limits, Queue, RequestAdapterOptions, Surface, SurfaceConfiguration,
+    wgt::DeviceDescriptor,
 };
 use winit::{
     application::ApplicationHandler,
@@ -13,7 +14,7 @@ use winit::{
     window::{CursorGrabMode, Window},
 };
 
-use crate::render_context::RenderContext;
+use crate::render::RenderContext;
 
 pub enum App {
     Uninitialized,
@@ -112,13 +113,17 @@ impl ApplicationHandler for App {
             let (device, queue) = adapter
                 .request_device(&DeviceDescriptor {
                     label: Some("From Render to Real Time"),
-                    required_features: wgpu::Features::default(),
-                    required_limits: Limits::defaults().using_resolution(Limits {
+                    required_features: wgpu::Features {
+                        features_wgpu: FeaturesWGPU::PUSH_CONSTANTS,
+                        features_webgpu: FeaturesWebGPU::default(),
+                    },
+                    required_limits: Limits {
                         max_texture_dimension_1d: 8192,
                         max_texture_dimension_2d: 8192,
                         max_texture_dimension_3d: 2048,
+                        max_push_constant_size: 128,
                         ..Default::default()
-                    }),
+                    },
                     ..Default::default()
                 })
                 .block_on()
@@ -231,7 +236,6 @@ impl ApplicationHandler for App {
                 if key_code == KeyCode::Escape && key_state.is_pressed() {
                     event_loop.exit();
                 } else if key_code == KeyCode::Backslash && key_state.is_pressed() {
-                    // Toggle cursor grab state
                     *is_cursor_grabbed = !*is_cursor_grabbed;
                     set_cursor_grabbed(window, *is_cursor_grabbed);
                 } else if *is_cursor_grabbed {

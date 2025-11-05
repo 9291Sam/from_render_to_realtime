@@ -1,21 +1,25 @@
 use std::{
+    f32::consts::PI,
     fs::File,
     io::BufReader,
     time::{Duration, Instant},
 };
 
-use nalgebra_glm::Vec3;
+use bytemuck::cast_slice;
+use nalgebra_glm::{Mat4, Vec2, Vec3};
 use wgpu::{
+    BindGroup, BindGroupDescriptor, BindGroupEntry, BindGroupLayout, BindGroupLayoutDescriptor,
+    BindGroupLayoutEntry, BindingType, Buffer, BufferBinding, BufferBindingType, BufferUsages,
     Color, CommandEncoder, Device, Extent3d, LoadOp, Operations, Queue, RenderPassColorAttachment,
-    RenderPassDepthStencilAttachment, RenderPassDescriptor, StoreOp, Texture, TextureDescriptor,
-    TextureFormat, TextureUsages, TextureView, TextureViewDescriptor,
+    RenderPassDepthStencilAttachment, RenderPassDescriptor, ShaderStages, StoreOp, Texture,
+    TextureDescriptor, TextureFormat, TextureUsages, TextureView, TextureViewDescriptor,
+    wgt::BufferDescriptor,
 };
 use winit::{dpi::PhysicalSize, event::ElementState, keyboard::KeyCode};
 
-use crate::{
-    camera::{Camera, Transform},
-    mesh_drawer::MeshDrawer,
-    triangle::Triangle,
+use crate::render::{
+    linear_algebra::{Camera, Transform},
+    renderables::{MeshDrawer, Triangle},
 };
 
 pub struct RenderContext {
@@ -27,16 +31,57 @@ pub struct RenderContext {
     depth_texture: Option<Texture>,
     depth_view: Option<TextureView>,
 
-    triangle: Triangle,
-    triangle2: Triangle,
-    mesh: MeshDrawer,
+    projection_matrices: Buffer,
+    global_data_bind_group_layout: BindGroupLayout,
+    global_data_bind_group: BindGroup,
+
+    frame_data_manager: FrameDataManager,
+
+    triangles: Vec<Triangle>,
+    meshes: Vec<MeshDrawer>,
 }
 
 impl RenderContext {
     pub const SURFACE_TEXTURE_FORMAT: TextureFormat = TextureFormat::Bgra8UnormSrgb;
     pub const SURFACE_DEPTH_FORMAT: TextureFormat = TextureFormat::Depth32Float;
+    pub const MAX_PROJECTION_MATRICES: u64 = 1024;
 
     pub fn new(device: Device) -> RenderContext {
+        let projection_matrices = device.create_buffer(&BufferDescriptor {
+            label: Some("Global Projection Matrices Buffer"),
+            size: size_of::<Mat4>() as u64 * Self::MAX_PROJECTION_MATRICES,
+            usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        let global_data_bind_group_layout =
+            device.create_bind_group_layout(&BindGroupLayoutDescriptor {
+                label: Some("Bind Group Layout"),
+                entries: &[BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: ShaderStages::all(),
+                    ty: BindingType::Buffer {
+                        ty: BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                }],
+            });
+
+        let global_data_bind_group = device.create_bind_group(&BindGroupDescriptor {
+            label: Some("Bind Group"),
+            layout: &global_data_bind_group_layout,
+            entries: &[BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::Buffer(BufferBinding {
+                    buffer: &projection_matrices,
+                    offset: 0,
+                    size: None,
+                }),
+            }],
+        });
+
         RenderContext {
             device: device.clone(),
 
@@ -46,29 +91,39 @@ impl RenderContext {
             depth_texture: None,
             depth_view: None,
 
-            triangle: Triangle::new(
-                device.clone(),
-                Transform {
-                    translation: Vec3::new(3.0, -1.3, 2.1),
-                    ..Default::default()
-                },
-            ),
+            frame_data_manager: FrameDataManager::new(),
 
-            triangle2: Triangle::new(
-                device.clone(),
-                Transform {
-                    translation: Vec3::new(3.0, 1.3, 2.1),
-                    ..Default::default()
-                },
-            ),
-            mesh: MeshDrawer::new(
+            triangles: vec![
+                Triangle::new(
+                    device.clone(),
+                    &global_data_bind_group_layout,
+                    Transform {
+                        translation: Vec3::new(3.0, -1.3, 2.1),
+                        ..Default::default()
+                    },
+                ),
+                Triangle::new(
+                    device.clone(),
+                    &global_data_bind_group_layout,
+                    Transform {
+                        translation: Vec3::new(3.0, 1.3, 2.1),
+                        ..Default::default()
+                    },
+                ),
+            ],
+            meshes: vec![MeshDrawer::new(
                 device,
+                &global_data_bind_group_layout,
                 BufReader::new(File::open("models/quad.obj").unwrap()),
                 Transform {
-                    scale: Vec3::new(2.0, -2.0, 2.0),
+                    scale: Vec3::new(20.0, -20.0, 20.0),
                     ..Default::default()
                 },
-            ),
+            )],
+
+            projection_matrices,
+            global_data_bind_group_layout,
+            global_data_bind_group,
         }
     }
 
@@ -108,7 +163,7 @@ impl RenderContext {
                     depth_or_array_layers: 1,
                 },
                 mip_level_count: 1,
-                sample_count: 1, // Must match pipeline
+                sample_count: 1,
                 dimension: wgpu::TextureDimension::D2,
                 format: Self::SURFACE_DEPTH_FORMAT,
                 usage: TextureUsages::RENDER_ATTACHMENT | TextureUsages::TEXTURE_BINDING,
@@ -123,12 +178,13 @@ impl RenderContext {
     }
 
     pub fn update(&mut self) {
+        let now = Instant::now();
         let delta_time = if let Some(last_frame_time) = self.last_frame_time {
-            Instant::now() - last_frame_time
+            now - last_frame_time
         } else {
             Duration::from_secs(0)
         };
-        self.last_frame_time = Some(Instant::now());
+        self.last_frame_time = Some(now);
         let delta_time_secs = delta_time.as_secs_f32();
 
         let camera_move_speed: f32 = if self.input_state.sprint { 5.0 } else { 2.0 };
@@ -209,19 +265,82 @@ impl RenderContext {
             occlusion_query_set: None,
         });
 
-        self.triangle
-            .draw(&self.camera, surface_view, queue, &mut render_pass);
+        render_pass.set_bind_group(0, Some(&self.global_data_bind_group), &[]);
 
-        self.triangle2
-            .draw(&self.camera, surface_view, queue, &mut render_pass);
+        self.frame_data_manager.start_new_frame();
 
-        self.mesh
-            .draw(&self.camera, surface_view, queue, &mut render_pass);
+        for t in &mut self.triangles {
+            t.draw(
+                &self.camera,
+                &mut self.frame_data_manager,
+                surface_view,
+                queue,
+                &mut render_pass,
+            );
+        }
+
+        for m in &mut self.meshes {
+            m.draw(
+                &self.camera,
+                &mut self.frame_data_manager,
+                surface_view,
+                queue,
+                &mut render_pass,
+            );
+        }
+
+        let surface_extent = surface_view.texture().size();
+
+        queue.write_buffer(
+            &self.projection_matrices,
+            0,
+            cast_slice(
+                &self
+                    .frame_data_manager
+                    .end_frame()
+                    .iter()
+                    .map(|t| {
+                        self.camera.get_perspective(
+                            Vec2::new(surface_extent.width as f32, surface_extent.height as f32),
+                            70.0 * PI / 180.0,
+                            t,
+                        )
+                    })
+                    .collect::<Vec<Mat4>>(),
+            ),
+        );
+    }
+}
+
+pub struct FrameDataManager {
+    transforms: Vec<Transform>,
+}
+
+impl FrameDataManager {
+    fn new() -> FrameDataManager {
+        FrameDataManager { transforms: vec![] }
+    }
+
+    fn start_new_frame(&mut self) {
+        self.transforms.clear();
+    }
+
+    #[must_use]
+    pub fn append_transform(&mut self, transform: Transform) -> u32 {
+        let output_index = self.transforms.len().try_into().unwrap();
+
+        self.transforms.push(transform);
+
+        output_index
+    }
+
+    fn end_frame(&self) -> &'_ [Transform] {
+        &self.transforms
     }
 }
 
 #[derive(Default)]
-pub struct InputState {
+struct InputState {
     pub forward: bool,
     pub backward: bool,
     pub left: bool,
