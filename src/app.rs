@@ -8,9 +8,9 @@ use wgpu::{
 use winit::{
     application::ApplicationHandler,
     dpi::PhysicalSize,
-    event::{KeyEvent, WindowEvent},
+    event::{ElementState, KeyEvent, WindowEvent},
     keyboard::{KeyCode, PhysicalKey},
-    window::Window,
+    window::{CursorGrabMode, Window},
 };
 
 use crate::render_context::RenderContext;
@@ -25,6 +25,7 @@ pub enum App {
         device: Device,
         queue: Queue,
         render_context: Box<RenderContext>,
+        is_cursor_grabbed: bool,
     },
 }
 
@@ -64,6 +65,22 @@ fn resize_surface(
     }
 }
 
+fn set_cursor_grabbed(window: &Window, is_grabbed: bool) {
+    if is_grabbed {
+        window.set_cursor_visible(false);
+        if let Err(_e) = window.set_cursor_grab(CursorGrabMode::Confined)
+            && let Err(err) = window.set_cursor_grab(CursorGrabMode::Locked)
+        {
+            eprintln!("Could not confine or lock cursor: {:?}", err);
+        }
+    } else {
+        window.set_cursor_visible(true);
+        if let Err(err) = window.set_cursor_grab(CursorGrabMode::None) {
+            eprintln!("Could not un-grab cursor: {:?}", err);
+        }
+    }
+}
+
 impl ApplicationHandler for App {
     fn resumed(&mut self, event_loop: &winit::event_loop::ActiveEventLoop) {
         if let App::Uninitialized = self {
@@ -74,12 +91,6 @@ impl ApplicationHandler for App {
                     )
                     .expect("Failed to create window!"),
             );
-            window.set_cursor_visible(false);
-            if let Err(_e) = window.set_cursor_grab(winit::window::CursorGrabMode::Confined)
-                && let Err(err) = window.set_cursor_grab(winit::window::CursorGrabMode::Locked)
-            {
-                panic!("Could not confine cursor: {:?}", err);
-            }
 
             let instance = Instance::new(&InstanceDescriptor {
                 backends: Backends::PRIMARY,
@@ -120,6 +131,9 @@ impl ApplicationHandler for App {
             resize_surface(&surface, &adapter, &device, initial_size);
             render_context.resize(initial_size);
 
+            let is_cursor_grabbed = true;
+            set_cursor_grabbed(&window, is_cursor_grabbed);
+
             *self = App::Initialized {
                 window,
                 _instance: instance,
@@ -128,6 +142,7 @@ impl ApplicationHandler for App {
                 device,
                 queue,
                 render_context: Box::new(render_context),
+                is_cursor_grabbed,
             };
         } else if let App::Initialized {
             surface,
@@ -147,8 +162,13 @@ impl ApplicationHandler for App {
         _: winit::event::DeviceId,
         event: winit::event::DeviceEvent,
     ) {
-        if let App::Initialized { render_context, .. } = self
+        if let App::Initialized {
+            render_context,
+            is_cursor_grabbed,
+            ..
+        } = self
             && let winit::event::DeviceEvent::MouseMotion { delta: (dx, dy) } = event
+            && *is_cursor_grabbed
         {
             render_context.on_mouse_motion(dx, dy);
         }
@@ -167,6 +187,7 @@ impl ApplicationHandler for App {
             device,
             queue,
             render_context,
+            is_cursor_grabbed,
             ..
         } = self
         else {
@@ -189,6 +210,15 @@ impl ApplicationHandler for App {
                 render_context.resize(new_size);
                 window.request_redraw();
             }
+            WindowEvent::MouseInput {
+                state: ElementState::Pressed,
+                ..
+            } => {
+                if !*is_cursor_grabbed {
+                    *is_cursor_grabbed = true;
+                    set_cursor_grabbed(window, *is_cursor_grabbed);
+                }
+            }
             WindowEvent::KeyboardInput {
                 event:
                     KeyEvent {
@@ -200,7 +230,11 @@ impl ApplicationHandler for App {
             } => {
                 if key_code == KeyCode::Escape && key_state.is_pressed() {
                     event_loop.exit();
-                } else {
+                } else if key_code == KeyCode::Backslash && key_state.is_pressed() {
+                    // Toggle cursor grab state
+                    *is_cursor_grabbed = !*is_cursor_grabbed;
+                    set_cursor_grabbed(window, *is_cursor_grabbed);
+                } else if *is_cursor_grabbed {
                     render_context.on_key_event(key_code, key_state);
                 }
             }
