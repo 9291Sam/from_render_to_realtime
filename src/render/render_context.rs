@@ -31,7 +31,8 @@ pub struct RenderContext {
     depth_texture: Option<Texture>,
     depth_view: Option<TextureView>,
 
-    projection_matrices: Buffer,
+    mvp_matrices: Buffer,
+    model_matrices: Buffer,
     global_data_bind_group_layout: BindGroupLayout,
     global_data_bind_group: BindGroup,
 
@@ -47,7 +48,14 @@ impl RenderContext {
     pub const MAX_PROJECTION_MATRICES: u64 = 1024;
 
     pub fn new(device: Device) -> RenderContext {
-        let projection_matrices = device.create_buffer(&BufferDescriptor {
+        let mvp_matrices = device.create_buffer(&BufferDescriptor {
+            label: Some("Global Projection Matrices Buffer"),
+            size: size_of::<Mat4>() as u64 * Self::MAX_PROJECTION_MATRICES,
+            usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        let model_matrices = device.create_buffer(&BufferDescriptor {
             label: Some("Global Projection Matrices Buffer"),
             size: size_of::<Mat4>() as u64 * Self::MAX_PROJECTION_MATRICES,
             usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
@@ -57,35 +65,57 @@ impl RenderContext {
         let global_data_bind_group_layout =
             device.create_bind_group_layout(&BindGroupLayoutDescriptor {
                 label: Some("Bind Group Layout"),
-                entries: &[BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: ShaderStages::all(),
-                    ty: BindingType::Buffer {
-                        ty: BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
+                entries: &[
+                    BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: ShaderStages::all(),
+                        ty: BindingType::Buffer {
+                            ty: BufferBindingType::Storage { read_only: true },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
                     },
-                    count: None,
-                }],
+                    BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: ShaderStages::all(),
+                        ty: BindingType::Buffer {
+                            ty: BufferBindingType::Storage { read_only: true },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                ],
             });
 
         let global_data_bind_group = device.create_bind_group(&BindGroupDescriptor {
             label: Some("Bind Group"),
             layout: &global_data_bind_group_layout,
-            entries: &[BindGroupEntry {
-                binding: 0,
-                resource: wgpu::BindingResource::Buffer(BufferBinding {
-                    buffer: &projection_matrices,
-                    offset: 0,
-                    size: None,
-                }),
-            }],
+            entries: &[
+                BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::Buffer(BufferBinding {
+                        buffer: &mvp_matrices,
+                        offset: 0,
+                        size: None,
+                    }),
+                },
+                BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Buffer(BufferBinding {
+                        buffer: &model_matrices,
+                        offset: 0,
+                        size: None,
+                    }),
+                },
+            ],
         });
 
         RenderContext {
             device: device.clone(),
 
-            camera: Camera::new_zeroed(),
+            camera: Camera::new(Vec3::new(-4.030, 7.04, -10.5692), 0.507993, 0.339997),
             input_state: InputState::default(),
             last_frame_time: None,
             depth_texture: None,
@@ -98,7 +128,7 @@ impl RenderContext {
                     device.clone(),
                     &global_data_bind_group_layout,
                     Transform {
-                        translation: Vec3::new(3.0, -1.3, 2.1),
+                        translation: Vec3::new(-8.3, 3.8723, 2.1),
                         ..Default::default()
                     },
                 ),
@@ -106,22 +136,45 @@ impl RenderContext {
                     device.clone(),
                     &global_data_bind_group_layout,
                     Transform {
-                        translation: Vec3::new(3.0, 1.3, 2.1),
+                        translation: Vec3::new(-7.20, 4.3, -1.1),
                         ..Default::default()
                     },
                 ),
             ],
-            meshes: vec![MeshDrawer::new(
-                device,
-                &global_data_bind_group_layout,
-                BufReader::new(File::open("models/quad.obj").unwrap()),
-                Transform {
-                    scale: Vec3::new(20.0, -20.0, 20.0),
-                    ..Default::default()
-                },
-            )],
+            meshes: vec![
+                MeshDrawer::new(
+                    device.clone(),
+                    &global_data_bind_group_layout,
+                    BufReader::new(File::open("models/quad.obj").unwrap()),
+                    Transform {
+                        scale: Vec3::new(10.0, 10.0, 10.0),
+                        ..Default::default()
+                    },
+                ),
+                MeshDrawer::new(
+                    device.clone(),
+                    &global_data_bind_group_layout,
+                    BufReader::new(File::open("models/flat_vase.obj").unwrap()),
+                    Transform {
+                        translation: Vec3::new(-3.25, 0.0, 0.0),
+                        scale: Vec3::new(10.0, -10.0, 10.0),
+                        ..Default::default()
+                    },
+                ),
+                MeshDrawer::new(
+                    device,
+                    &global_data_bind_group_layout,
+                    BufReader::new(File::open("models/smooth_vase.obj").unwrap()),
+                    Transform {
+                        translation: Vec3::new(3.25, 0.0, 0.0),
+                        scale: Vec3::new(10.0, -10.0, 10.0),
+                        ..Default::default()
+                    },
+                ),
+            ],
 
-            projection_matrices,
+            mvp_matrices,
+            model_matrices,
             global_data_bind_group_layout,
             global_data_bind_group,
         }
@@ -292,7 +345,7 @@ impl RenderContext {
         let surface_extent = surface_view.texture().size();
 
         queue.write_buffer(
-            &self.projection_matrices,
+            &self.mvp_matrices,
             0,
             cast_slice(
                 &self
@@ -306,6 +359,19 @@ impl RenderContext {
                             t,
                         )
                     })
+                    .collect::<Vec<Mat4>>(),
+            ),
+        );
+
+        queue.write_buffer(
+            &self.model_matrices,
+            0,
+            cast_slice(
+                &self
+                    .frame_data_manager
+                    .end_frame()
+                    .iter()
+                    .map(|t| t.as_model_matrix())
                     .collect::<Vec<Mat4>>(),
             ),
         );

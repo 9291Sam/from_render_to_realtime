@@ -5,23 +5,47 @@ struct VertexInput {
 
 struct VertexOutput {
     @builtin(position) clip_position: vec4<f32>,
-    @location(0) color: vec3<f32>,
+    @location(0) world_position: vec3<f32>,
+    @location(1) normal: vec3<f32>,
+};
+
+struct PointLight {
+    position: vec4<f32>,
+    color_and_intensity: vec4<f32>
 };
 
 
-@group(0) @binding(0) var<storage, read> projection_matrices: array<mat4x4<f32>, 1024>;
+@group(0) @binding(0) var<storage, read> mvp_matrices: array<mat4x4<f32>, 1024>;
+@group(0) @binding(1) var<storage, read> model_matrices: array<mat4x4<f32>, 1024>;
 
 var<push_constant> matrix_index: u32;
 
 @vertex
 fn vs_main(model: VertexInput) -> VertexOutput {
     var out: VertexOutput;
-    out.clip_position = projection_matrices[matrix_index] * vec4<f32>(model.position, 1.0);
-    out.color = model.normal * 0.5 + 0.5;
+    out.clip_position = mvp_matrices[matrix_index] * vec4<f32>(model.position, 1.0);
+    out.world_position = (model_matrices[matrix_index] * vec4<f32>(model.position, 1.0)).xyz;
+    out.normal = model.normal; // TODO: normal matrix
     return out;
 }
 
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
-    return vec4<f32>(in.color, 1.0);
+    let light = PointLight(vec4<f32>(0.0, 2.5, 0.0, 0.0), vec4<f32>(0.8, 1.0, 1.0, 3.0));
+   
+    let light_color = light.color_and_intensity.xyz;
+    let light_intensity = light.color_and_intensity.w;
+    let light_pos = light.position.xyz;
+    
+    let ambient_strength = 0.01;
+    let ambient_color = light_color * ambient_strength;
+
+    let normal = normalize(in.normal);
+    let light_dir = normalize(light_pos - in.world_position);
+    let diffuse_factor = max(dot(normal, light_dir), 0.0);
+    let diffuse_color = light_color * light_intensity * diffuse_factor;
+    let final_color = ambient_color + diffuse_color;
+   
+   
+    return vec4<f32>(final_color, 1.0);
 }
