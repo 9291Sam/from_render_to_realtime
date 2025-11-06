@@ -6,10 +6,10 @@ use std::{
     time::{Duration, Instant},
 };
 
-use bytemuck::{NoUninit, Pod, Zeroable, cast_slice};
+use bytemuck::{Pod, Zeroable, cast_slice};
 use nalgebra_glm::{Mat4, Vec2, Vec3, Vec4};
 use wgpu::{
-    BindGroup, BindGroupDescriptor, BindGroupEntry, BindGroupLayout, BindGroupLayoutDescriptor,
+    BindGroup, BindGroupDescriptor, BindGroupEntry, BindGroupLayoutDescriptor,
     BindGroupLayoutEntry, BindingType, Buffer, BufferBinding, BufferBindingType, BufferUsages,
     Color, CommandEncoder, Device, Extent3d, LoadOp, Operations, Queue, RenderPassColorAttachment,
     RenderPassDepthStencilAttachment, RenderPassDescriptor, ShaderStages, StoreOp, Texture,
@@ -20,7 +20,7 @@ use winit::{dpi::PhysicalSize, event::ElementState, keyboard::KeyCode};
 
 use crate::render::{
     linear_algebra::{Camera, Transform},
-    renderables::{MeshDrawer, Triangle},
+    renderables::{BillBoard, BillBoardManager, MeshDrawer, Triangle},
 };
 
 pub struct RenderContext {
@@ -37,13 +37,13 @@ pub struct RenderContext {
     model_matrices: Buffer,
     normal_matrices: Buffer,
     point_lights: Buffer,
-    global_data_bind_group_layout: BindGroupLayout,
     global_data_bind_group: BindGroup,
 
     frame_data_manager: FrameDataManager,
 
     triangles: Vec<Triangle>,
     meshes: Vec<MeshDrawer>,
+    billboard_manager: BillBoardManager,
 }
 
 impl RenderContext {
@@ -218,7 +218,7 @@ impl RenderContext {
                     },
                 ),
                 MeshDrawer::new(
-                    device,
+                    device.clone(),
                     &global_data_bind_group_layout,
                     BufReader::new(File::open("models/smooth_vase.obj").unwrap()),
                     Transform {
@@ -227,13 +227,32 @@ impl RenderContext {
                         ..Default::default()
                     },
                 ),
+                MeshDrawer::new(
+                    device.clone(),
+                    &global_data_bind_group_layout,
+                    BufReader::new(File::open("models/beetle.obj").unwrap()),
+                    Transform {
+                        translation: Vec3::new(0.0, -3.0, 0.0),
+                        scale: Vec3::new(10.0, 10.0, 10.0),
+                        ..Default::default()
+                    },
+                ),
+                // MeshDrawer::new(
+                //     device.clone(),
+                //     &global_data_bind_group_layout,
+                //     BufReader::new(File::open("models/suzanne.obj").unwrap()),
+                //     Transform {
+                //         translation: Vec3::new(0.0, 0.0, 0.0),
+                //         scale: Vec3::new(10.0, 10.0, 10.0),
+                //         ..Default::default()
+                //     },
+                // ),
             ],
-
+            billboard_manager: BillBoardManager::new(device, &global_data_bind_group_layout),
             mvp_matrices,
             model_matrices,
             normal_matrices,
             point_lights,
-            global_data_bind_group_layout,
             global_data_bind_group,
         }
     }
@@ -298,7 +317,7 @@ impl RenderContext {
         self.last_frame_time = Some(now);
         let delta_time_secs = delta_time.as_secs_f32();
 
-        let camera_move_speed: f32 = if self.input_state.sprint { 5.0 } else { 2.0 };
+        let camera_move_speed: f32 = if self.input_state.sprint { 12.0 } else { 5.0 };
         let mut delta_pos = Vec3::zeros();
 
         if self.input_state.forward {
@@ -400,6 +419,72 @@ impl RenderContext {
             );
         }
 
+        let time_alive: f32 = self.init_time.elapsed().as_secs_f32();
+
+        fn hsv_to_rgb(h: f32, s: f32, v: f32) -> Vec3 {
+            if s == 0.0 {
+                return Vec3::new(v, v, v);
+            }
+
+            let h_norm = (h * 6.0).rem(6.0);
+            let i = h_norm.floor() as i32;
+            let f = h_norm - h_norm.floor();
+
+            let p = v * (1.0 - s);
+            let q = v * (1.0 - f * s);
+            let t = v * (1.0 - (1.0 - f) * s);
+
+            match i {
+                0 => Vec3::new(v, t, p),
+                1 => Vec3::new(q, v, p),
+                2 => Vec3::new(p, v, t),
+                3 => Vec3::new(p, q, v),
+                4 => Vec3::new(t, p, v),
+                _ => Vec3::new(v, p, q),
+            }
+        }
+
+        const NUMBER_OF_POINT_LIGHTS: u32 = 64;
+        let point_lights: Vec<PointLight> = (0..NUMBER_OF_POINT_LIGHTS)
+            .map(|i| {
+                let t = time_alive + (i as f32 / NUMBER_OF_POINT_LIGHTS as f32) * PI * 2.0;
+                let c = hsv_to_rgb(i as f32 / NUMBER_OF_POINT_LIGHTS as f32, 1.0, 1.0);
+                let r = 16.0;
+
+                PointLight {
+                    position: Vec4::new(
+                        r * t.cos(),
+                        (t * 3.0 + 3.0 * time_alive).cos() * 2.83 + 5.21,
+                        r * t.sin(),
+                        0.0,
+                    ),
+                    color_and_intensity: Vec4::new(c.x, c.y, c.z, 3.25),
+                }
+            })
+            .collect::<Vec<_>>();
+
+        self.billboard_manager.set_billboards(
+            point_lights
+                .iter()
+                .map(|p| BillBoard {
+                    position_and_size: Vec4::new(p.position.x, p.position.y, p.position.z, 0.5),
+                    color: Vec4::new(
+                        p.color_and_intensity.x,
+                        p.color_and_intensity.y,
+                        p.color_and_intensity.z,
+                        0.0,
+                    ),
+                })
+                .collect(),
+        );
+
+        self.billboard_manager.draw(
+            &self.camera,
+            &mut self.frame_data_manager,
+            queue,
+            &mut render_pass,
+        );
+
         let surface_extent = surface_view.texture().size();
 
         queue.write_buffer(
@@ -447,51 +532,7 @@ impl RenderContext {
             ),
         );
 
-        let time_alive: f32 = self.init_time.elapsed().as_secs_f32();
-
-        fn hsv_to_rgb(h: f32, s: f32, v: f32) -> Vec3 {
-            if s == 0.0 {
-                return Vec3::new(v, v, v);
-            }
-
-            let h_norm = (h * 6.0).rem(6.0);
-            let i = h_norm.floor() as i32;
-            let f = h_norm - h_norm.floor();
-
-            let p = v * (1.0 - s);
-            let q = v * (1.0 - f * s);
-            let t = v * (1.0 - (1.0 - f) * s);
-
-            match i {
-                0 => Vec3::new(v, t, p),
-                1 => Vec3::new(q, v, p),
-                2 => Vec3::new(p, v, t),
-                3 => Vec3::new(p, q, v),
-                4 => Vec3::new(t, p, v),
-                _ => Vec3::new(v, p, q),
-            }
-        }
-
-        const NUMBER_OF_POINT_LIGHTS: u32 = 64;
-
-        queue.write_buffer(
-            &self.point_lights,
-            0,
-            cast_slice(
-                &(0..NUMBER_OF_POINT_LIGHTS)
-                    .map(|i| {
-                        let t = time_alive + (i as f32 / NUMBER_OF_POINT_LIGHTS as f32) * PI * 2.0;
-                        let c = hsv_to_rgb(i as f32 / NUMBER_OF_POINT_LIGHTS as f32, 1.0, 1.0);
-                        let r = 12.0;
-
-                        PointLight {
-                            position: Vec4::new(r * t.cos(), 5.0, r * t.sin(), 0.0),
-                            color_and_intensity: Vec4::new(c.x, c.y, c.z, 2.25),
-                        }
-                    })
-                    .collect::<Vec<_>>(),
-            ),
-        );
+        queue.write_buffer(&self.point_lights, 0, cast_slice(&point_lights));
     }
 }
 
