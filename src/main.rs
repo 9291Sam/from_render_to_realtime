@@ -1,5 +1,4 @@
 mod app;
-mod render;
 
 use winit::event_loop::EventLoop;
 

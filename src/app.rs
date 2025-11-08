@@ -2,19 +2,15 @@ use std::sync::Arc;
 
 use pollster::FutureExt;
 use wgpu::{
-    Adapter, Backends, CommandEncoderDescriptor, Device, FeaturesWGPU, FeaturesWebGPU, Instance,
-    InstanceDescriptor, Limits, Queue, RequestAdapterOptions, Surface, SurfaceConfiguration,
-    wgt::DeviceDescriptor,
+    Adapter, Backends, Color, CommandEncoderDescriptor, Device, FeaturesWGPU, FeaturesWebGPU,
+    Instance, InstanceDescriptor, Limits, LoadOp, Operations, Queue, RenderPassColorAttachment,
+    RenderPassDescriptor, RequestAdapterOptions, StoreOp, Surface, SurfaceConfiguration,
+    TextureFormat,
+    wgt::{DeviceDescriptor, TextureViewDescriptor},
 };
 use winit::{
-    application::ApplicationHandler,
-    dpi::PhysicalSize,
-    event::{ElementState, KeyEvent, WindowEvent},
-    keyboard::{KeyCode, PhysicalKey},
-    window::{CursorGrabMode, Window},
+    application::ApplicationHandler, dpi::PhysicalSize, event::WindowEvent, window::Window,
 };
-
-use crate::render::RenderContext;
 
 pub enum App {
     Uninitialized,
@@ -25,8 +21,6 @@ pub enum App {
         adapter: Adapter,
         device: Device,
         queue: Queue,
-        render_context: Box<RenderContext>,
-        is_cursor_grabbed: bool,
     },
 }
 
@@ -46,7 +40,7 @@ fn resize_surface(
     assert!(
         surface_capabilities
             .formats
-            .contains(&RenderContext::SURFACE_TEXTURE_FORMAT)
+            .contains(&TextureFormat::Bgra8UnormSrgb)
     );
 
     if new_size.height > 0 && new_size.width > 0 {
@@ -54,7 +48,7 @@ fn resize_surface(
             device,
             &SurfaceConfiguration {
                 usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-                format: RenderContext::SURFACE_TEXTURE_FORMAT,
+                format: TextureFormat::Bgra8UnormSrgb,
                 width: new_size.width,
                 height: new_size.height,
                 present_mode: wgpu::PresentMode::Fifo,
@@ -63,22 +57,6 @@ fn resize_surface(
                 desired_maximum_frame_latency: 2,
             },
         );
-    }
-}
-
-fn set_cursor_grabbed(window: &Window, is_grabbed: bool) {
-    if is_grabbed {
-        window.set_cursor_visible(false);
-        if let Err(_e) = window.set_cursor_grab(CursorGrabMode::Confined)
-            && let Err(err) = window.set_cursor_grab(CursorGrabMode::Locked)
-        {
-            eprintln!("Could not confine or lock cursor: {:?}", err);
-        }
-    } else {
-        window.set_cursor_visible(true);
-        if let Err(err) = window.set_cursor_grab(CursorGrabMode::None) {
-            eprintln!("Could not un-grab cursor: {:?}", err);
-        }
     }
 }
 
@@ -129,15 +107,8 @@ impl ApplicationHandler for App {
                 .block_on()
                 .expect("Failed to create WGPU Device & Queue");
 
-            let mut render_context = RenderContext::new(device.clone());
-
-            render_context.on_resume();
             let initial_size = window.inner_size();
             resize_surface(&surface, &adapter, &device, initial_size);
-            render_context.resize(initial_size);
-
-            let is_cursor_grabbed = true;
-            set_cursor_grabbed(&window, is_cursor_grabbed);
 
             *self = App::Initialized {
                 window,
@@ -146,8 +117,6 @@ impl ApplicationHandler for App {
                 adapter,
                 device,
                 queue,
-                render_context: Box::new(render_context),
-                is_cursor_grabbed,
             };
         } else if let App::Initialized {
             surface,
@@ -158,24 +127,6 @@ impl ApplicationHandler for App {
         } = self
         {
             resize_surface(surface, adapter, device, window.inner_size());
-        }
-    }
-
-    fn device_event(
-        &mut self,
-        _: &winit::event_loop::ActiveEventLoop,
-        _: winit::event::DeviceId,
-        event: winit::event::DeviceEvent,
-    ) {
-        if let App::Initialized {
-            render_context,
-            is_cursor_grabbed,
-            ..
-        } = self
-            && let winit::event::DeviceEvent::MouseMotion { delta: (dx, dy) } = event
-            && *is_cursor_grabbed
-        {
-            render_context.on_mouse_motion(dx, dy);
         }
     }
 
@@ -191,8 +142,6 @@ impl ApplicationHandler for App {
             adapter,
             device,
             queue,
-            render_context,
-            is_cursor_grabbed,
             ..
         } = self
         else {
@@ -206,45 +155,14 @@ impl ApplicationHandler for App {
             }
             WindowEvent::Resized(new_size) => {
                 resize_surface(surface, adapter, device, new_size);
-                render_context.resize(new_size);
                 window.request_redraw();
             }
             WindowEvent::ScaleFactorChanged { .. } => {
                 let new_size = window.inner_size();
                 resize_surface(surface, adapter, device, new_size);
-                render_context.resize(new_size);
                 window.request_redraw();
             }
-            WindowEvent::MouseInput {
-                state: ElementState::Pressed,
-                ..
-            } => {
-                if !*is_cursor_grabbed {
-                    *is_cursor_grabbed = true;
-                    set_cursor_grabbed(window, *is_cursor_grabbed);
-                }
-            }
-            WindowEvent::KeyboardInput {
-                event:
-                    KeyEvent {
-                        physical_key: PhysicalKey::Code(key_code),
-                        state: key_state,
-                        ..
-                    },
-                ..
-            } => {
-                if key_code == KeyCode::Escape && key_state.is_pressed() {
-                    event_loop.exit();
-                } else if key_code == KeyCode::Backslash && key_state.is_pressed() {
-                    *is_cursor_grabbed = !*is_cursor_grabbed;
-                    set_cursor_grabbed(window, *is_cursor_grabbed);
-                } else if *is_cursor_grabbed {
-                    render_context.on_key_event(key_code, key_state);
-                }
-            }
             WindowEvent::RedrawRequested => {
-                render_context.update();
-
                 let surface_texture = match surface.get_current_texture() {
                     Ok(t) => t,
                     Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) => {
@@ -261,16 +179,37 @@ impl ApplicationHandler for App {
                     }
                 };
 
+                let surface_view = surface_texture
+                    .texture
+                    .create_view(&TextureViewDescriptor::default());
+
                 let mut command_encoder =
                     device.create_command_encoder(&CommandEncoderDescriptor {
                         label: Some("Command Encoder"),
                     });
 
-                render_context.render_frame(
-                    &mut command_encoder,
-                    &surface_texture.texture.create_view(&Default::default()),
-                    queue,
-                );
+                let render_pass = command_encoder.begin_render_pass(&RenderPassDescriptor {
+                    label: Some("Render Pass"),
+                    color_attachments: &[Some(RenderPassColorAttachment {
+                        view: &surface_view,
+                        depth_slice: None,
+                        resolve_target: None,
+                        ops: Operations {
+                            load: LoadOp::Clear(Color {
+                                r: 0.5,
+                                g: 0.6,
+                                b: 0.7,
+                                a: 1.0,
+                            }),
+                            store: StoreOp::Store,
+                        },
+                    })],
+                    depth_stencil_attachment: None,
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                });
+
+                drop(render_pass);
 
                 queue.submit([command_encoder.finish()]);
 
