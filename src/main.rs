@@ -1,5 +1,5 @@
 mod app;
-mod render;
+mod triangle;
 
 use winit::event_loop::EventLoop;
 

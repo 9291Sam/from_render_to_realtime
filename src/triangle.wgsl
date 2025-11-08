@@ -5,10 +5,6 @@ struct VertexOutput {
     @location(0) color: vec4<f32>,
 }
 
-@group(0) @binding(0) var<storage, read> mvp_matrices: array<mat4x4<f32>, 1024>;
-@group(0) @binding(1) var<storage, read> model_matrices: array<mat4x4<f32>, 1024>;
-
-var<push_constant> matrix_index: u32;
 
 @vertex
 fn vs_main(@builtin(vertex_index) in_vertex_index: u32) -> VertexOutput {
@@ -27,9 +23,8 @@ fn vs_main(@builtin(vertex_index) in_vertex_index: u32) -> VertexOutput {
     let pos = positions[in_vertex_index];
     let color = colors[in_vertex_index];
 
-
     var out: VertexOutput;
-    out.clip_position = mvp_matrices[matrix_index] * vec4<f32>(pos, 1.0);
+    out.clip_position = vec4<f32>(pos, 1.0);
     out.color = color;
     return out;
 }
