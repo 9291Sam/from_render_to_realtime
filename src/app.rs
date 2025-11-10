@@ -8,7 +8,7 @@ use wgpu::{
 };
 use winit::{
     application::ApplicationHandler,
-    dpi::PhysicalSize,
+    dpi::{LogicalSize, PhysicalSize, Size},
     event::{ElementState, KeyEvent, WindowEvent},
     keyboard::{KeyCode, PhysicalKey},
     window::{CursorGrabMode, Window},
@@ -88,7 +88,9 @@ impl ApplicationHandler for App {
             let window = Arc::new(
                 event_loop
                     .create_window(
-                        Window::default_attributes().with_title("From Render To Real Time"),
+                        Window::default_attributes()
+                            .with_title("From Render To Real Time")
+                            .with_inner_size(Size::Logical(LogicalSize::new(1280.0, 720.0))),
                     )
                     .expect("Failed to create window!"),
             );

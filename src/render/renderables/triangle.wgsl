@@ -1,5 +1,3 @@
-
-
 struct VertexOutput {
     @builtin(position) clip_position: vec4<f32>,
     @location(0) color: vec4<f32>,
@@ -7,6 +5,7 @@ struct VertexOutput {
 
 @group(0) @binding(0) var<storage, read> mvp_matrices: array<mat4x4<f32>, 1024>;
 @group(0) @binding(1) var<storage, read> model_matrices: array<mat4x4<f32>, 1024>;
+@group(0) @binding(2) var<storage, read> normal_matrices: array<mat4x4<f32>, 1024>;
 
 var<push_constant> matrix_index: u32;
 
